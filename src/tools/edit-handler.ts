@@ -248,6 +248,11 @@ export async function handleEditTool(
             if (matches.length === 0) {
               matches = [looseEscapeMatches[0]];
               matchedVia = "loose_escape";
+              replacementOldString = looseEscapeMatches[0].text;
+              const correctedNew = fixNewStringEscaping(oldString, looseEscapeMatches[0].text, newString);
+              if (correctedNew !== null) {
+                replacementNewString = correctedNew;
+              }
             }
           }
         }
@@ -558,6 +563,97 @@ function applyReplacement(
 
 function stripReadResultLineTabs(value: string): string {
   return value.replaceAll("\n\t", "\n");
+}
+
+type TokenSegment = { type: "slash"; length: number } | { type: "text"; value: string };
+
+function fixNewStringEscaping(oldString: string, matchedText: string, newString: string): string | null {
+  if (oldString === matchedText) {
+    return null; // no escaping difference to correct
+  }
+
+  const oldTokens = tokenizeLooseEscaping(oldString);
+  const matchedTokens = tokenizeLooseEscaping(matchedText);
+  const newTokens = tokenizeLooseEscaping(newString);
+
+  // Align oldTokens and matchedTokens: text segments must be identical
+  const ratios: Array<number | null> = [];
+  let oi = 0;
+  let mi = 0;
+  while (oi < oldTokens.length || mi < matchedTokens.length) {
+    const oldTok = oi < oldTokens.length ? oldTokens[oi] : null;
+    const matchedTok = mi < matchedTokens.length ? matchedTokens[mi] : null;
+
+    if (oldTok && oldTok.type === "text" && matchedTok && matchedTok.type === "text") {
+      if (oldTok.value !== matchedTok.value) {
+        return null; // alignment broken; text differs more than escaping
+      }
+      oi += 1;
+      mi += 1;
+    } else if (oldTok && oldTok.type === "slash") {
+      if (matchedTok && matchedTok.type === "slash") {
+        ratios.push(matchedTok.length / oldTok.length);
+        oi += 1;
+        mi += 1;
+      } else {
+        // old has backslashes but matched does not
+        ratios.push(0);
+        oi += 1;
+        // mi stays (matchedTok is a text token or null; will be consumed on next iteration)
+      }
+    } else if (matchedTok && matchedTok.type === "slash") {
+      // matched has backslashes but old does not — should not happen with loose_escape regex
+      ratios.push(matchedTok.length); // relative to 1
+      mi += 1;
+    } else {
+      return null; // unexpected token pattern
+    }
+  }
+
+  // Apply ratios to newString; reuse last ratio for trailing slash runs
+  let result = "";
+  let ri = 0;
+  let lastRatio: number | null = null;
+  for (const tok of newTokens) {
+    if (tok.type === "slash") {
+      const ratio = ri < ratios.length ? ratios[ri] : lastRatio;
+      if (ratio !== null) {
+        const correctedCount = Math.max(0, Math.round(tok.length * ratio));
+        result += "\\".repeat(correctedCount);
+      } else {
+        result += "\\".repeat(tok.length);
+      }
+      if (ri < ratios.length) {
+        lastRatio = ratios[ri];
+      }
+      ri += 1;
+    } else {
+      result += tok.value;
+    }
+  }
+
+  return result === newString ? null : result;
+}
+
+function tokenizeLooseEscaping(value: string): TokenSegment[] {
+  const segments: TokenSegment[] = [];
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === "\\") {
+      const start = index;
+      while (index < value.length && value[index] === "\\") {
+        index += 1;
+      }
+      segments.push({ type: "slash", length: index - start });
+    } else {
+      const start = index;
+      while (index < value.length && value[index] !== "\\") {
+        index += 1;
+      }
+      segments.push({ type: "text", value: value.slice(start, index) });
+    }
+  }
+  return segments;
 }
 
 function buildCandidateMetadata(

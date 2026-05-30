@@ -572,45 +572,14 @@ function fixNewStringEscaping(oldString: string, matchedText: string, newString:
     return null; // no escaping difference to correct
   }
 
-  const oldTokens = tokenizeLooseEscaping(oldString);
-  const matchedTokens = tokenizeLooseEscaping(matchedText);
-  const newTokens = tokenizeLooseEscaping(newString);
-
-  // Align oldTokens and matchedTokens: text segments must be identical
-  const ratios: Array<number | null> = [];
-  let oi = 0;
-  let mi = 0;
-  while (oi < oldTokens.length || mi < matchedTokens.length) {
-    const oldTok = oi < oldTokens.length ? oldTokens[oi] : null;
-    const matchedTok = mi < matchedTokens.length ? matchedTokens[mi] : null;
-
-    if (oldTok && oldTok.type === "text" && matchedTok && matchedTok.type === "text") {
-      if (oldTok.value !== matchedTok.value) {
-        return null; // alignment broken; text differs more than escaping
-      }
-      oi += 1;
-      mi += 1;
-    } else if (oldTok && oldTok.type === "slash") {
-      if (matchedTok && matchedTok.type === "slash") {
-        ratios.push(matchedTok.length / oldTok.length);
-        oi += 1;
-        mi += 1;
-      } else {
-        // old has backslashes but matched does not
-        ratios.push(0);
-        oi += 1;
-        // mi stays (matchedTok is a text token or null; will be consumed on next iteration)
-      }
-    } else if (matchedTok && matchedTok.type === "slash") {
-      // matched has backslashes but old does not — should not happen with loose_escape regex
-      ratios.push(matchedTok.length); // relative to 1
-      mi += 1;
-    } else {
-      return null; // unexpected token pattern
-    }
+  const ratios = collectLooseEscapeRatios(oldString, matchedText);
+  if (!ratios) {
+    return null;
   }
 
-  // Apply ratios to newString; reuse last ratio for trailing slash runs
+  const newTokens = tokenizeLooseEscaping(newString);
+
+  // Apply ratios to newString; reuse last ratio for trailing slash runs.
   let result = "";
   let ri = 0;
   let lastRatio: number | null = null;
@@ -633,6 +602,57 @@ function fixNewStringEscaping(oldString: string, matchedText: string, newString:
   }
 
   return result === newString ? null : result;
+}
+
+function collectLooseEscapeRatios(oldString: string, matchedText: string): number[] | null {
+  const ratios: number[] = [];
+  let oi = 0;
+  let mi = 0;
+
+  while (oi < oldString.length) {
+    if (oldString[oi] !== "\\") {
+      if (mi >= matchedText.length || matchedText[mi] !== oldString[oi]) {
+        return null;
+      }
+      oi += 1;
+      mi += 1;
+      continue;
+    }
+
+    const oldSlashStart = oi;
+    while (oi < oldString.length && oldString[oi] === "\\") {
+      oi += 1;
+    }
+    const oldSlashCount = oi - oldSlashStart;
+
+    if (oi >= oldString.length) {
+      const matchedSlashStart = mi;
+      while (mi < matchedText.length && matchedText[mi] === "\\") {
+        mi += 1;
+      }
+      const matchedSlashCount = mi - matchedSlashStart;
+      if (matchedSlashCount !== oldSlashCount) {
+        return null;
+      }
+      ratios.push(1);
+      continue;
+    }
+
+    const anchor = oldString[oi];
+    const matchedSlashStart = mi;
+    while (mi < matchedText.length && matchedText[mi] === "\\") {
+      mi += 1;
+    }
+    const matchedSlashCount = mi - matchedSlashStart;
+    if (mi >= matchedText.length || matchedText[mi] !== anchor) {
+      return null;
+    }
+    ratios.push(matchedSlashCount / oldSlashCount);
+    oi += 1;
+    mi += 1;
+  }
+
+  return mi === matchedText.length ? ratios : null;
 }
 
 function tokenizeLooseEscaping(value: string): TokenSegment[] {

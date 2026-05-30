@@ -677,6 +677,50 @@ test("Edit corrects newString escaping in loose_escape fallback for over-escaped
   assert.equal(fs.readFileSync(filePath, "utf8"), String.raw`M\"{u}nchen is nice` + "\n");
 });
 
+test("Edit removes quote escapes from newString in loose_escape fallback when matched text has none", async () => {
+  const workspace = createTempWorkspace();
+  const filePath = path.join(workspace, "quoted.ts");
+  fs.writeFileSync(filePath, 'const label = "alpha";\n', "utf8");
+
+  const sessionId = "loose-escape-quote-zero-ratio";
+  const snippet = await readSnippet(filePath, sessionId, workspace);
+
+  const editResult = await handleEditTool(
+    {
+      snippet_id: snippet.id,
+      old_string: String.raw`const label = \"alpha\";`,
+      new_string: String.raw`const label = \"beta\";`,
+    },
+    createContext(sessionId, workspace)
+  );
+
+  assert.equal(editResult.ok, true);
+  assert.equal(editResult.metadata?.matched_via, "loose_escape");
+  assert.equal(fs.readFileSync(filePath, "utf8"), 'const label = "beta";\n');
+});
+
+test("Edit reuses the last loose_escape ratio for extra backslash runs in newString", async () => {
+  const workspace = createTempWorkspace();
+  const filePath = path.join(workspace, "latex-extra-runs.tex");
+  fs.writeFileSync(filePath, String.raw`\alpha is here` + "\n", "utf8");
+
+  const sessionId = "loose-escape-extra-new-runs";
+  const snippet = await readSnippet(filePath, sessionId, workspace);
+
+  const editResult = await handleEditTool(
+    {
+      snippet_id: snippet.id,
+      old_string: String.raw`\\alpha`,
+      new_string: String.raw`\\beta + \\gamma`,
+    },
+    createContext(sessionId, workspace)
+  );
+
+  assert.equal(editResult.ok, true);
+  assert.equal(editResult.metadata?.matched_via, "loose_escape");
+  assert.equal(fs.readFileSync(filePath, "utf8"), String.raw`\beta + \gamma is here` + "\n");
+});
+
 test("Edit strips accidental read-result tabs after newlines when that creates a unique match", async () => {
   const workspace = createTempWorkspace();
   const filePath = path.join(workspace, "tabs.ts");

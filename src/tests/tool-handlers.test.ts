@@ -713,6 +713,31 @@ test("Edit uses LLM correction for ambiguous mixed escaping with JS unicode esca
   assert.equal(fs.readFileSync(filePath, "utf8"), 'const sequence = "\\u001B[13;130u" + "done" + "\\u001B[0m";\n');
 });
 
+test("Edit returns an error when deterministic correction is ambiguous and no LLM is available", async () => {
+  const workspace = createTempWorkspace();
+  const filePath = path.join(workspace, "ambiguous-no-llm.tex");
+  // Mixed escaping: single-backslash LaTeX command + bare double-quotes
+  fs.writeFileSync(filePath, String.raw`\alpha + "x"` + "\n", "utf8");
+
+  const sessionId = "ambiguous-no-llm";
+  const snippet = await readSnippet(filePath, sessionId, workspace);
+
+  // LLM over-escaped inconsistently: doubled backslash for \alpha, backslash-escaped double-quote
+  const editResult = await handleEditTool(
+    {
+      snippet_id: snippet.id,
+      old_string: String.raw`\\alpha + \"x\"`,
+      new_string: String.raw`\\beta + \"y\" + \\gamma`,
+    },
+    createContext(sessionId, workspace)
+  );
+
+  assert.equal(editResult.ok, false);
+  assert.match(editResult.error ?? "", /escaping/);
+  // File should be untouched
+  assert.equal(fs.readFileSync(filePath, "utf8"), String.raw`\alpha + "x"` + "\n");
+});
+
 test("Edit deterministically corrects JSON string escaping without calling LLM", async () => {
   const workspace = createTempWorkspace();
   const filePath = path.join(workspace, "pattern.json");

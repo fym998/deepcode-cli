@@ -263,9 +263,17 @@ export async function handleEditTool(
               }
 
               if (matches.length === 0) {
-                matches = [looseEscapeMatch];
-                matchedVia = "loose_escape";
-                replacementOldString = looseEscapeMatch.text;
+                return {
+                  ok: false,
+                  name: "edit",
+                  error:
+                    "old_string escaping doesn't match the file and cannot be corrected " +
+                    "deterministically (inconsistent escaping patterns). " +
+                    "Re-read the file and use exact escaping, or use the Bash tool instead.",
+                  metadata: {
+                    scope: formatScopeMetadata(scope),
+                  },
+                };
               }
             }
           }
